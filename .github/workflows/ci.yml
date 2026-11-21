@@ -1,5 +1,4 @@
-@'
-name: CI Pipeline
+﻿name: CI Pipeline
 
 on:
   push:
@@ -34,4 +33,3 @@ jobs:
 
       - name: Run tests
         run: uv run --locked pytest -v
-'@ | Set-Content -Encoding utf8 .github/workflows/ci.yml
