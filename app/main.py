@@ -3,7 +3,11 @@ import logging
 import os
 import time
 
-from fastapi import FastAPI, Request
+import httpx2
+from fastapi import FastAPI, HTTPException, Request
+
+from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
 
 from opentelemetry import trace
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -11,6 +15,7 @@ from opentelemetry.instrumentation.logging import LoggingInstrumentor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
+from opentelemetry.trace import Status, StatusCode
 
 from app.utils import get_welcome_message
 
@@ -29,6 +34,8 @@ tracer_provider.add_span_processor(
 )
 
 trace.set_tracer_provider(tracer_provider)
+
+tracer = trace.get_tracer(__name__)
 
 
 # Configure Python logging with OpenTelemetry correlation
@@ -102,3 +109,99 @@ async def health_check():
 async def root():
     """Return the application welcome message."""
     return {"message": get_welcome_message()}
+
+
+@app.get("/github/file")
+async def get_github_file(path: str):
+    """Retrieve a file from GitHub through the GitHub MCP server."""
+
+    token = os.getenv("GITHUB_MCP_TOKEN")
+
+    if not token:
+        raise HTTPException(
+            status_code=503,
+            detail="GitHub MCP token is not configured.",
+        )
+
+    owner = os.getenv("GITHUB_REPOSITORY_OWNER", "razamehar")
+    repo = os.getenv("GITHUB_REPOSITORY_NAME", "python-service-lab")
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-MCP-Toolsets": "repos",
+        "Accept": "application/json, text/event-stream",
+    }
+
+    timeout = httpx2.Timeout(30, read=300)
+
+    try:
+        with tracer.start_as_current_span(
+            "mcp.github.get_file_contents"
+        ) as span:
+
+            span.set_attribute("mcp.server", "github")
+            span.set_attribute("mcp.tool", "get_file_contents")
+            span.set_attribute("github.repository", f"{owner}/{repo}")
+            span.set_attribute("github.file_path", path)
+
+            async with httpx2.AsyncClient(
+                headers=headers,
+                timeout=timeout,
+            ) as http_client:
+
+                async with streamable_http_client(
+                    "https://api.githubcopilot.com/mcp/readonly",
+                    http_client=http_client,
+                ) as (read_stream, write_stream):
+
+                    async with ClientSession(
+                        read_stream,
+                        write_stream,
+                    ) as session:
+
+                        await session.initialize()
+
+                        result = await session.call_tool(
+                            "get_file_contents",
+                            arguments={
+                                "owner": owner,
+                                "repo": repo,
+                                "path": path,
+                            },
+                        )
+
+            if result.is_error:
+                span.set_status(Status(StatusCode.ERROR))
+                error_messages = [
+                    item.text
+                    for item in result.content
+                    if hasattr(item, "text")
+                ]
+
+                raise HTTPException(
+                    status_code=502,
+                    detail=error_messages or "GitHub MCP tool returned an error.",
+                )
+
+            file_content = [
+                item.text
+                for item in result.content
+                if hasattr(item, "text")
+            ]
+
+            return {
+                "repository": f"{owner}/{repo}",
+                "path": path,
+                "content": file_content,
+            }
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        logger.exception("GitHub MCP request failed")
+
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to retrieve the file through GitHub MCP.",
+        ) from exc

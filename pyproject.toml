@@ -5,6 +5,8 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.165.0",
+    "httpx2>=2.16.2",
+    "mcp>=2.3.0",
     "opentelemetry-api>=1.45.2",
     "opentelemetry-instrumentation-fastapi>=0.66b2",
     "opentelemetry-instrumentation-logging>=0.66b2",
