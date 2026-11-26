@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 
 from app import main as main_module
+from app.services import github_mcp as github_mcp_module
 
 app = main_module.app
 client = TestClient(app)
@@ -88,17 +89,19 @@ def setup_mcp_mocks(monkeypatch, mock_result):
             return mock_result
 
     monkeypatch.setattr(
-        main_module.httpx2,
-        "AsyncClient",
-        FakeAsyncClient,
-    )
+    github_mcp_module.httpx2,
+    "AsyncClient",
+    FakeAsyncClient,
+)
+
     monkeypatch.setattr(
-        main_module,
+        github_mcp_module,
         "streamable_http_client",
         fake_streamable_http_client,
     )
+
     monkeypatch.setattr(
-        main_module,
+        github_mcp_module,
         "ClientSession",
         FakeClientSession,
     )
